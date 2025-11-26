@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Z_n Graph Explorer</title>
+    <!-- Graphing Library -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- SQLite for Web -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --input-bg: #2c2c2c;
+            --border-color: #333;
+            --accent-color: #bb86fc;
+            --btn-bg: #3700b3;
+            --btn-text: #ffffff;
+            --highlight: #3a3a3a;
+        }
+
+        body.light-mode {
+            --bg-color: #f4f4f4;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --input-bg: #ffffff;
+            --border-color: #ddd;
+            --accent-color: #007bff;
+            --btn-bg: #007bff;
+            --btn-text: #ffffff;
+            --highlight: #ffffcc;
+        }
+
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            padding: 20px; 
+            background-color: var(--bg-color); 
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+            margin: 0;
+        }
+
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            background: var(--card-bg); 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); 
+        }
+
+        .header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .stats-box {
+            background: var(--card-bg);
+            padding: 8px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-weight: bold;
+            color: var(--accent-color);
+            font-size: 0.9rem;
+        }
+
+        /* Loading Screen Overlay */
+        #dbLoader {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 999;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: white;
+        }
+        .progress-bar {
+            width: 300px; height: 10px; background: #444;
+            margin-top: 15px; border-radius: 5px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; width: 0%; background: var(--accent-color);
+            transition: width 0.2s;
+        }
+
+        /* Filter Styles */
+        .filter-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .filter-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .search-box { 
+            flex-grow: 2; 
+            padding: 10px; 
+            font-size: 16px; 
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            border-radius: 4px;
+        }
+        .num-input {
+            width: 100px; 
+            padding: 10px; 
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            border-radius: 4px;
+        }
+        .checkbox-wrapper {
+            display: flex; align-items: center; gap: 5px;
+            font-size: 14px; user-select: none;
+            background: var(--input-bg);
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { 
+            border-bottom: 1px solid var(--border-color); 
+            padding: 12px 8px; text-align: left; 
+        }
+        th { 
+            background-color: var(--input-bg); color: var(--accent-color); 
+        }
+        tr:hover { background-color: var(--highlight); }
+
+        #network { 
+            width: 100%; height: 500px; 
+            border: 1px solid var(--border-color); 
+            margin-top: 20px; margin-bottom: 20px;
+            display: none; background: #222; border-radius: 4px;
+        }
+        body.light-mode #network { background: #fff; }
+
+        .btn { 
+            padding: 10px 20px; cursor: pointer; 
+            background: var(--btn-bg); color: var(--btn-text); 
+            border: none; border-radius: 4px; font-weight: bold;
+        }
+        .btn-small { padding: 5px 10px; font-size: 12px; }
+        .btn-toggle { background: transparent; border: 1px solid var(--border-color); color: var(--text-color); }
+        
+        .loading-trigger { text-align: center; padding: 20px; color: #888; }
+    </style>
+</head>
+<body>
+
+    <!-- DB Loading Overlay -->
+    <div id="dbLoader">
+        <h2>Loading Database...</h2>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <p id="progressText">Initializing...</p>
+    </div>
+
+    <div class="container">
+        <div class="header-bar">
+            <h1>Z_n Graph Explorer (Static)</h1>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <div class="stats-box" id="maxNDisplay">Max N: -</div>
+                <button class="btn btn-toggle" onclick="toggleTheme()">Subjective Light/Dark</button>
+            </div>
+        </div>
+
+        <div id="network"></div>
+
+        <div class="filter-container">
+            <div class="filter-row">
+                <input type="text" id="searchInput" class="search-box" placeholder="Search Components: 6, (3,4), (1,2)..." onkeyup="handleEnter(event)">
+                <input type="number" id="minN" class="num-input" placeholder="Min N">
+                <input type="number" id="maxN" class="num-input" placeholder="Max N">
+                <button class="btn" onclick="resetAndSearch()">Search</button>
+            </div>
+            <div class="filter-row">
+                <label class="checkbox-wrapper">
+                    <input type="checkbox" id="hidePrimes" checked onchange="resetAndSearch()"> Hide Primes
+                </label>
+                <label class="checkbox-wrapper">
+                    <input type="checkbox" id="requireComplete" onchange="resetAndSearch()"> Must have Complete Component
+                </label>
+            </div>
+        </div>
+        
+        <table id="resultsTable">
+            <thead>
+                <tr>
+                    <th width="10%">n</th>
+                    <th width="60%">Components</th>
+                    <th width="15%">w (Cardinality)</th>
+                    <th width="15%">Action</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        
+        <div id="loadingTrigger" class="loading-trigger">
+            Scroll to load more...
+        </div>
+    </div>
+
+    <script>
+        let db = null;
+        let offset = 0;
+        let limit = 50;
+        let isLoading = false;
+        let hasMore = true;
+
+        // ---------------------------------------------------------
+        // Database Initialization (Fetch & Load WASM)
+        // ---------------------------------------------------------
+        document.addEventListener('DOMContentLoaded', async () => {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const loader = document.getElementById('dbLoader');
+
+            try {
+                // 1. Initialize SQL.js
+                const config = {
+                    locateFile: filename => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${filename}`
+                }
+                const SQL = await initSqlJs(config);
+
+                // 2. Fetch the DB file with progress
+                progressText.innerText = "Downloading graph_data.db...";
+                const response = await fetch('graph_data.db');
+                if (!response.ok) throw new Error("Could not fetch database file");
+
+                const contentLength = +response.headers.get('Content-Length');
+                const reader = response.body.getReader();
+                let receivedLength = 0;
+                let chunks = [];
+
+                while(true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    receivedLength += value.length;
+                    
+                    if(contentLength) {
+                        let pct = Math.round((receivedLength / contentLength) * 100);
+                        progressFill.style.width = pct + "%";
+                        progressText.innerText = `Downloading... ${pct}%`;
+                    }
+                }
+
+                // 3. Assemble blob
+                let chunksAll = new Uint8Array(receivedLength);
+                let position = 0;
+                for(let chunk of chunks) {
+                    chunksAll.set(chunk, position);
+                    position += chunk.length;
+                }
+
+                // 4. Load into SQLite
+                progressText.innerText = "Parsing Database...";
+                db = new SQL.Database(chunksAll);
+                
+                // Hide loader
+                loader.style.display = 'none';
+                
+                // Initial Stats & Search
+                updateStats();
+                resetAndSearch();
+
+                // Observer for infinite scroll
+                const observer = new IntersectionObserver((entries) => {
+                    if(entries[0].isIntersecting && !isLoading && hasMore) {
+                        performSearch(false);
+                    }
+                }, { threshold: 0.1 });
+                observer.observe(document.getElementById('loadingTrigger'));
+
+            } catch (err) {
+                progressText.innerText = "Error: " + err.message;
+                progressFill.style.backgroundColor = "red";
+                console.error(err);
+            }
+        });
+
+        function updateStats() {
+            try {
+                const res = db.exec("SELECT MAX(n) as max_n FROM records");
+                if(res.length > 0 && res[0].values.length > 0) {
+                    const max = res[0].values[0][0];
+                    document.getElementById('maxNDisplay').innerText = "Max N: " + (max || 0);
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        // ---------------------------------------------------------
+        // UI Logic
+        // ---------------------------------------------------------
+        function toggleTheme() {
+            document.body.classList.toggle('light-mode');
+        }
+        function handleEnter(e) {
+            if(e.key === 'Enter') resetAndSearch();
+        }
+        function resetAndSearch() {
+            if(!db) return;
+            offset = 0;
+            hasMore = true;
+            document.querySelector('#resultsTable tbody').innerHTML = '';
+            document.getElementById('network').style.display = 'none';
+            performSearch(true);
+        }
+
+        // ---------------------------------------------------------
+        // Search & Logic (Ported from Python)
+        // ---------------------------------------------------------
+        function performSearch(isReset) {
+            if (isLoading || (!hasMore && !isReset)) return;
+            isLoading = true;
+            document.getElementById('loadingTrigger').innerText = "Loading...";
+
+            const queryStr = document.getElementById('searchInput').value.trim();
+            const minN = document.getElementById('minN').value;
+            const maxN = document.getElementById('maxN').value;
+            const hidePrimes = document.getElementById('hidePrimes').checked;
+            const requireComplete = document.getElementById('requireComplete').checked;
+
+            // Build SQL Query
+            let sql = "SELECT n, components_str, w, graph_data FROM records WHERE 1=1";
+            let params = {};
+
+            if(minN) { sql += " AND n >= $min"; params['$min'] = parseInt(minN); }
+            if(maxN) { sql += " AND n <= $max"; params['$max'] = parseInt(maxN); }
+            if(hidePrimes) { sql += " AND is_prime = 0"; }
+            if(requireComplete) { sql += " AND components_str LIKE '%C_{%'"; }
+
+            if(queryStr) {
+                // Javascript Regex Logic to mimic Python parsing
+                // Split by "), (" roughly or comma
+                // We'll clean parts manually
+                
+                const parts = queryStr.split(/\),\s*/); 
+                let compClauses = [];
+
+                parts.forEach((rawPart, idx) => {
+                    let part = rawPart.replace(')', '').replace('(', '').trim();
+                    
+                    // Case 1: Exact Complete "6" -> C_{6}
+                    if (/^\d+$/.test(part)) {
+                        let paramKey = `$c_${idx}`;
+                        compClauses.push(`components_str LIKE ${paramKey}`);
+                        params[paramKey] = `%C_{${part}}%`;
+                    }
+                    // Case 2: Partial "(6," -> K_{6,X} or K_{X,6}
+                    else if (rawPart.includes(',') && (rawPart.includes('(,') || rawPart.includes(',)'))) {
+                        // This regex is tricky in JS split, let's just check raw string for structure
+                        // If user typed "(6," or ",6)"
+                        let nums = part.match(/\d+/);
+                        if(nums) {
+                            let val = nums[0];
+                            let k1 = `$k1_${idx}`;
+                            let k2 = `$k2_${idx}`;
+                            compClauses.push(`(components_str LIKE ${k1} OR components_str LIKE ${k2})`);
+                            params[k1] = `%K_{${val},%`;
+                            params[k2] = `%,${val}}%`;
+                        }
+                    }
+                    // Case 3: Full "(3,4)"
+                    else if (part.includes(',')) {
+                        let nums = part.match(/\d+/g);
+                        if(nums && nums.length >= 2) {
+                            let n1 = parseInt(nums[0]);
+                            let n2 = parseInt(nums[1]);
+                            let low = Math.min(n1, n2);
+                            let high = Math.max(n1, n2);
+                            let k = `$full_${idx}`;
+                            compClauses.push(`components_str LIKE ${k}`);
+                            params[k] = `%K_{${low},${high}}%`;
+                        }
+                    }
+                });
+
+                if(compClauses.length > 0) {
+                    sql += " AND (" + compClauses.join(" AND ") + ")";
+                }
+            }
+
+            sql += ` ORDER BY n ASC LIMIT ${limit} OFFSET ${offset}`;
+
+            try {
+                // Execute Query
+                const stmt = db.prepare(sql);
+                stmt.bind(params);
+                
+                const rows = [];
+                while(stmt.step()) {
+                    rows.push(stmt.getAsObject());
+                }
+                stmt.free();
+
+                if(rows.length < limit) {
+                    hasMore = false;
+                    document.getElementById('loadingTrigger').innerText = "End of results";
+                } else {
+                    document.getElementById('loadingTrigger').innerText = "Scroll for more";
+                }
+
+                const tbody = document.querySelector('#resultsTable tbody');
+                
+                rows.forEach(r => {
+                    const tr = document.createElement('tr');
+                    const hasGraph = r.graph_data && r.graph_data !== 'null';
+                    
+                    const graphBtn = hasGraph 
+                        ? `<button class="btn btn-small" onclick='drawGraph(${r.n})'>Graph</button>` 
+                        : '<span style="color:gray; font-size:0.9em;">Too Large</span>';
+
+                    tr.innerHTML = `
+                        <td><strong>${r.n}</strong></td>
+                        <td style="word-break: break-all;">${r.components_str}</td>
+                        <td>${r.w}</td>
+                        <td>${graphBtn}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+                offset += limit;
+
+            } catch(e) {
+                console.error("Query Error", e);
+            } finally {
+                isLoading = false;
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Graphing Logic (Copied from previous)
+        // ---------------------------------------------------------
+        function drawGraph(n) {
+            // Fetch directly from DB
+            const stmt = db.prepare("SELECT graph_data FROM records WHERE n = $n");
+            stmt.bind({$n: n});
+            if(stmt.step()) {
+                const row = stmt.getAsObject();
+                const gData = JSON.parse(row.graph_data);
+                
+                const container = document.getElementById('network');
+                container.style.display = 'block';
+
+                const nodes = new vis.DataSet(gData.nodes);
+                const edges = new vis.DataSet(gData.edges);
+
+                const nodeMap = {}; 
+                gData.nodes.forEach(n => nodeMap[n.id] = n);
+                
+                const adj = {}; 
+                gData.nodes.forEach(n => adj[n.id] = []);
+                gData.edges.forEach(e => {
+                    if(!adj[e.from]) adj[e.from] = [];
+                    if(!adj[e.to]) adj[e.to] = [];
+                    adj[e.from].push(e.to);
+                    adj[e.to].push(e.from);
+                });
+
+                const paletteA = "#ff5722"; 
+                const paletteB = "#00bcd4"; 
+                const paletteC = "#ffeb3b"; 
+
+                const groups = {};
+                gData.nodes.forEach(n => {
+                    if(!groups[n.group]) groups[n.group] = [];
+                    groups[n.group].push(n.id);
+                });
+
+                Object.keys(groups).forEach(gId => {
+                    const groupNodes = groups[gId];
+                    if(groupNodes.length === 0) return;
+
+                    const colors = {}; 
+                    let isBipartite = true;
+                    const visited = new Set();
+                    
+                    groupNodes.forEach(root => {
+                        if(visited.has(root)) return;
+                        
+                        const q = [{id: root, c: 0}];
+                        colors[root] = 0;
+                        visited.add(root);
+
+                        while(q.length > 0) {
+                            const curr = q.shift();
+                            const nextColor = 1 - curr.c;
+                            const neighbors = adj[curr.id] || [];
+                            for(let neighborId of neighbors) {
+                                if (nodeMap[neighborId].group != gId) continue;
+                                if(!visited.has(neighborId)) {
+                                    visited.add(neighborId);
+                                    colors[neighborId] = nextColor;
+                                    q.push({id: neighborId, c: nextColor});
+                                } else {
+                                    if(colors[neighborId] === curr.c) isBipartite = false;
+                                }
+                            }
+                        }
+                    });
+
+                    groupNodes.forEach(nid => {
+                        if(!isBipartite) {
+                            nodes.update({id: nid, color: {background: paletteC, border: paletteC}});
+                        } else {
+                            const c = colors[nid] === 0 ? paletteA : paletteB;
+                            nodes.update({id: nid, color: {background: c, border: c}});
+                        }
+                    });
+                });
+                
+                const options = {
+                    nodes: {
+                        shape: 'dot',
+                        size: 15,
+                        font: { size: 16, color: '#ffffff', strokeWidth: 2, strokeColor: '#000000' }
+                    },
+                    physics: { stabilization: false, barnesHut: { gravitationalConstant: -2000 } },
+                    interaction: { hover: true }
+                };
+                
+                new vis.Network(container, {nodes, edges}, options);
+                container.scrollIntoView({behavior: "smooth"});
+            }
+            stmt.free();
+        }
+    </script>
+</body>
+</html>
